@@ -1,223 +1,177 @@
-# 🌟 Comprehensive Multi-Service System
+# Image Scraping System Server
 
-This project features a suite of interconnected services designed to simplify operations involving **database management**, **dynamic content handling**, and **third-party integrations** like **WordPress**. Powered by **FastAPI**, the system offers robust APIs for scalable and efficient performance.
+A unified, asynchronous **FastAPI** service for scraping images from webpages, storing them safely on disk, searching stored assets by filename, and serving them over HTTP.
 
----
-
-## 📑 Table of Contents
-
-- [🌟 Comprehensive Multi-Service System](#-comprehensive-multi-service-system)
-  - [📑 Table of Contents](#-table-of-contents)
-  - [1. 🚀 Servers Overview](#1--servers-overview)
-    - [🔹 Dynamic Database Saver](#-dynamic-database-saver)
-    - [🔹 Dynamic Image Saver](#-dynamic-image-saver)
-    - [🔹 Additional Planned Services](#-additional-planned-services)
-  - [2. ✨ Features](#2--features)
-  - [3. ⚙️ Setup and Installation](#3-️-setup-and-installation)
-    - [Prerequisites](#prerequisites)
-    - [Installation Steps](#installation-steps)
-  - [4. 🔗 API Endpoints](#4--api-endpoints)
-    - [🔹 Dynamic Database Saver](#-dynamic-database-saver-1)
-    - [🔹 Dynamic Image Saver](#-dynamic-image-saver-1)
-  - [5. 🗄️ Database Configuration](#5-️-database-configuration)
-  - [6. 🌐 WordPress Integration](#6--wordpress-integration)
-    - [Configuration Steps:](#configuration-steps)
-    - [Supported Formats:](#supported-formats)
-  - [7. 📂 Folder Structure](#7--folder-structure)
-  - [8. 🔮 Future Enhancements](#8--future-enhancements)
-  - [9. 🙌 Credits](#9--credits)
+> **Consolidation Note:** Previously split across two overlapping services (`scraper_server` and `image_search_server`), this repository now provides a single cohesive service with unified configuration, concurrent async downloads, and path-traversal protection. See [ADR-001](./docs/adr/ADR-001-consolidate-scraper-and-image-search-services.md).
 
 ---
 
-## 1. 🚀 Servers Overview
+## Architecture Overview
 
-### 🔹 Dynamic Database Saver
+```mermaid
+flowchart LR
+    Client["Client / Web App / CLI"] -->|"HTTP / JSON"| API["FastAPI App (main.py)"]
 
-- Dynamically connects to any database using API-supplied credentials.
-- Supports operations like **saving**, **querying**, and **updating data**.
-- Handles background tasks for non-blocking performance.
+    subgraph Routers ["API Layer (app/routers/)"]
+        HealthR["health.py\nGET /, GET /health"]
+        ImagesR["images.py\nPOST /api/v1/images/scrape\nGET /api/v1/images\nGET /api/v1/images/search\nGET|DELETE /api/v1/images/{filename}"]
+        DocsUIR["docs_ui.py\nGET /playground, GET /scalar"]
+    end
 
-### 🔹 Dynamic Image Saver
+    subgraph Services ["Domain Services (app/services/)"]
+        Scraper["ImageScraperService\nhttpx.AsyncClient + BeautifulSoup4\nBounded Semaphore Concurrency"]
+        Storage["ImageStorage\naiofiles + Path-Traversal Guard\nFilename Sanitization"]
+    end
 
-- Automates saving images from a local directory to a **MySQL database**.
-- Optionally uploads images to **WordPress** via REST API and saves the WordPress URL in the database.
-
-### 🔹 Additional Planned Services
-
-The modular design enables adding new services, such as:
-
-- **User Management**
-- **File Processing**
-- **Enhanced Third-Party Integrations**
-
----
-
-## 2. ✨ Features
-
-- **Dynamic Database Connections**  
-  Flexibly connect to and operate on any database using runtime-provided credentials.
-
-- **Image Handling**  
-  Batch-process images, save metadata, and optionally upload to WordPress.
-
-- **Background Tasks**  
-  Use asynchronous operations for faster and non-blocking workflows.
-
-- **Error Handling**  
-  Robust mechanisms to handle invalid paths, database issues, and API errors.
-
-- **Scalability**  
-  Designed for extensibility, allowing seamless integration of new services and endpoints.
+    API --> HealthR
+    API --> ImagesR
+    API --> DocsUIR
+    HealthR --> Storage
+    ImagesR --> Scraper
+    ImagesR --> Storage
+    Scraper -->|"Async HTTP GET"| TargetWeb["Target Webpage & Image CDNs"]
+    Scraper --> Storage
+    Storage --> Disk[("Local Storage\nscraped_images/ or /tmp/scraped_images")]
+```
 
 ---
 
-## 3. ⚙️ Setup and Installation
+## Quick Start
 
 ### Prerequisites
+- **Python** 3.10+ (tested on 3.12 and 3.13)
+- `pip`
 
-- **Python** 3.9+
-- **MySQL** or **MariaDB** database
-- **WordPress** (for image upload integration)
+### 1. Clone & Configure Environment
+```bash
+git clone https://github.com/digitalterrene/image-scraping-system-server.git
+cd image-scraping-system-server
+cp .env.example .env
+```
 
-### Installation Steps
+### 2. Install Dependencies
+```bash
+python -m venv .venv
+# Windows (PowerShell): .\.venv\Scripts\Activate.ps1
+# macOS / Linux:        source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-1. **Clone the Repository**
+### 3. Run the Server
+```bash
+python -m uvicorn main:app --reload
+```
 
-   ```bash
-   git clone https://github.com/your-repo/multi-service-system.git
-   cd multi-service-system
-   ```
+### Interactive API Docs & In-Browser Testing (No Postman / Thunder Client Needed)
+Once the server is running, open any of these built-in developer tools:
+- **Visual API Playground:** `http://127.0.0.1:8000/playground` *(scrape URLs, preview image thumbnails, search, delete, and inspect live JSON responses)*
+- **Scalar API Reference:** `http://127.0.0.1:8000/scalar` *(modern interactive API tester with generated `curl`, Python, and JS snippets)*
+- **Swagger UI:** `http://127.0.0.1:8000/docs` *(OpenAPI "Try it out" explorer)*
+- **ReDoc:** `http://127.0.0.1:8000/redoc`
 
-2. **Install Dependencies**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run Each Server**  
-   Start servers using `uvicorn`. Example for Dynamic Image Saver:
-
-   ```bash
-   uvicorn main:main_app --reload
-   ```
-
-4. **Access API Documentation**  
-   Navigate to `/docs` for interactive API documentation:  
-   Example: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
----
-
-## 4. 🔗 API Endpoints
-
-### 🔹 Dynamic Database Saver
-
-- **POST /save-to-database/**  
-  Dynamically connect to a database and save incoming data.
-
-  **Parameters**:
-
-  - Database credentials (`db_host`, `db_port`, `db_user`, `db_password`, `db_name`)
-  - Data to save (JSON)
-
-  **Response**:
-
-  - Success or failure message after saving data.
+For a step-by-step usage guide with `curl`, PowerShell, Python, and JavaScript examples, see the **[API Walkthrough Guide](./docs/guides/api-walkthrough.md)**.
 
 ---
 
-### 🔹 Dynamic Image Saver
+## API Endpoints
 
-- **GET /**  
-  Health check endpoint to verify server status.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Service discovery, version, and route index |
+| `GET` | `/health` | Health check with storage directory and image count |
+| `POST` | `/api/v1/images/scrape` | Scrape `<img>` tags from a target webpage URL and save valid images |
+| `GET` | `/api/v1/images` | List all stored images (supports optional `?query=` filter) |
+| `GET` | `/api/v1/images/search` | Search stored images by case-insensitive filename substring (`?query=...`) |
+| `GET` | `/api/v1/images/{filename}` | Serve a stored image file safely |
+| `DELETE` | `/api/v1/images/{filename}` | Delete a stored image file |
 
-- **POST /save-images-to-database/**  
-  Save images and metadata to a database and optionally upload to WordPress.
-
-  **Parameters**:
-
-  - Directory path containing images.
-  - Optional WordPress credentials (`wp_api_url`, `wp_user`, `wp_password`).
-
-  **Response**:
-
-  - Success message with details of processed images.
+See [API Specification](./docs/architecture/api-specification.md) for full request/response schemas and `curl` examples.
 
 ---
 
-## 5. 🗄️ Database Configuration
+## Environment Variables
 
-- Uses **SQLAlchemy** for ORM with **MySQL** database support.
-- Dynamically connects to the database specified in the request.
-- Automatically creates tables based on ORM models.
+All configuration is centralized in [`app/config.py`](./app/config.py) and documented in [`.env.example`](./.env.example):
 
-**Example Table (Dynamic Image Saver):**
+| Variable | Default | Description |
+|---|---|---|
+| `SCRAPED_IMAGES_DIR` | `scraped_images` (`/tmp/scraped_images` on Vercel) | Directory used to store scraped images |
+| `BASE_URL` | *(derived from request)* | Optional public URL prefix for returned image links |
+| `REQUEST_TIMEOUT_SECONDS` | `15.0` | Timeout (seconds) for upstream webpage and image fetches |
+| `MAX_CONCURRENT_DOWNLOADS` | `10` | Max simultaneous image downloads per scrape request |
+| `MAX_IMAGE_SIZE_BYTES` | `10485760` (10 MiB) | Maximum allowed file size per downloaded image |
+| `MAX_IMAGES_PER_SCRAPE` | `50` | Cap on unique image URLs processed per scrape request |
+| `CORS_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
+| `SCRAPER_USER_AGENT` | `ImageScrapingSystem/2.0 (...)` | `User-Agent` header sent to target websites |
 
-```sql
-CREATE TABLE images (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    file_name VARCHAR(255) NOT NULL UNIQUE,
-    title VARCHAR(255),
-    description TEXT,
-    wp_url VARCHAR(255)
-);
+---
+
+## Project Structure
+
+```text
+image-scraping-system-server/
+├── main.py                              # ASGI entrypoint (Uvicorn & Vercel)
+├── app/
+│   ├── config.py                        # Immutable Settings loaded from env
+│   ├── schemas.py                       # Pydantic v2 request/response DTOs
+│   ├── routers/
+│   │   ├── docs_ui.py                   # GET /playground, GET /scalar
+│   │   ├── health.py                    # GET /, GET /health
+│   │   └── images.py                    # /api/v1/images/* endpoints
+│   └── services/
+│       ├── scraper.py                   # Async HTML parsing & concurrent downloads
+│       └── storage.py                   # Safe local storage & path-traversal guard
+├── tests/                               # Unit & end-to-end API tests
+├── docs/
+│   ├── git-standards.md                 # Tier 1: Git & Conventional Commit standards
+│   ├── guides/                          # Developer walkthroughs & usage guides
+│   ├── architecture/                    # Tier 2: System design, API, data model, security
+│   ├── adr/                             # Tier 3: Architecture Decision Records
+│   └── runbooks/                        # Tier 4: Deployment & incident runbooks
+├── .github/                             # CI workflow, PR & Issue templates
+├── CHANGELOG.md                         # Release history & v2.0 enhancements
+├── .env.example                         # Environment configuration template
+├── requirements.txt                     # Minimal production Python dependencies
+└── vercel.json                          # Vercel Python serverless configuration
 ```
 
 ---
 
-## 6. 🌐 WordPress Integration
+## Verification & Testing
 
-The **Dynamic Image Saver** supports uploading images to **WordPress** using its REST API.
+Run the full unit and API test suite:
+```bash
+python -m unittest discover -s tests -v
+```
 
-### Configuration Steps:
-
-1. Provide the WordPress API endpoint (e.g., `/wp-json/wp/v2/media`).
-2. Use a valid WordPress username and password for authentication.
-
-### Supported Formats:
-
-- JPEG
-- PNG
-- GIF
-
----
-
-## 7. 📂 Folder Structure
-
-```plaintext
-project-root/
-│
-├── dynamic_database_saver.py  # Server for saving data to any database.
-├── dynamic_image_saver.py     # Server for image handling and saving.
-├── requirements.txt           # Python dependencies.
-├── README.md                  # Project documentation.
-└── ...                        # Additional services and modules.
+Run the repository hygiene audit:
+```bash
+node .agents/skills/senior-repo-standards/scripts/audit-hygiene.js
 ```
 
 ---
 
-## 8. 🔮 Future Enhancements
+## Documentation Architecture
 
-- **Authentication and Authorization**  
-  Add OAuth2 for secure access to APIs.
+This repository follows the **4-Tier Documentation Architecture**:
 
-- **Cloud Storage Integration**  
-  Support for AWS S3, Google Cloud Storage, and Azure Blob Storage.
-
-- **User Management API**  
-  Extend functionality to manage users and roles.
-
-- **Custom Query Builder**  
-  Provide a user-friendly frontend for building dynamic queries.
+| Tier | Location | Contents |
+|---|---|---|
+| **Tier 1: Governance** | Root (`/`) | [README](./README.md), [CHANGELOG](./CHANGELOG.md), [CONTRIBUTING](./CONTRIBUTING.md), [SECURITY](./SECURITY.md), [LICENSE](./LICENSE), [Git Standards](./docs/git-standards.md) |
+| **Developer Guides** | [`docs/guides/`](./docs/guides/) | [API Walkthrough & Interactive Testing Guide](./docs/guides/api-walkthrough.md) |
+| **Tier 2: Architecture** | [`docs/architecture/`](./docs/architecture/) | [System Design](./docs/architecture/system-design.md), [API Spec](./docs/architecture/api-specification.md), [Data Model](./docs/architecture/data-model.md), [Security](./docs/architecture/security-and-rbac.md) |
+| **Tier 3: Decisions** | [`docs/adr/`](./docs/adr/) | [ADR Index](./docs/adr/README.md), [ADR-001](./docs/adr/ADR-001-consolidate-scraper-and-image-search-services.md), [ADR-002](./docs/adr/ADR-002-async-http-scraping-and-storage-abstraction.md) |
+| **Tier 4: Runbooks** | [`docs/runbooks/`](./docs/runbooks/) | [Deployment Verification](./docs/runbooks/deployment-verification.md), [Incident Response](./docs/runbooks/incident-response.md) |
 
 ---
 
-## 9. 🙌 Credits
+## Tech Stack
 
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
-- **Database ORM**: [SQLAlchemy](https://www.sqlalchemy.org/)
-- **Third-Party Integration**: [WordPress REST API](https://developer.wordpress.org/rest-api/)
-
----
-
-💡 _Feel free to contribute, suggest features, or report issues!_  
-📧 Contact: [Your Email]
+| Layer | Technology |
+|---|---|
+| Web Framework | [FastAPI](https://fastapi.tiangolo.com/) + [Pydantic v2](https://docs.pydantic.dev/) |
+| ASGI Server | [Uvicorn](https://www.uvicorn.org/) |
+| Async HTTP Client | [HTTPX](https://www.python-httpx.org/) |
+| Async File I/O | [aiofiles](https://github.com/Tinche/aiofiles) |
+| HTML Parsing | [BeautifulSoup 4](https://www.crummy.com/software/BeautifulSoup/) |
+| Serverless Runtime | [Vercel Python](https://vercel.com/docs/functions/runtimes/python) (+ optional [Mangum](https://mangum.io/)) |
